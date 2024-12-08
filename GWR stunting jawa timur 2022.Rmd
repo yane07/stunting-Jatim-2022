@@ -1,0 +1,339 @@
+---
+title: "stunting"
+author: "Yohanita"
+date: "2023-08-14"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r library}
+library(car)
+library(lmtest)
+library(spgwr)
+library(fBasics)
+library(AICcmodavg)
+library(foreign)
+library(lattice)
+library(zoo)
+library(ape)
+library(Matrix)
+library(mvtnorm)
+library(emulator)
+library(MLmetrics)
+library(GWmodel)
+library(sp)
+```
+
+
+```{r data}
+library(readxl)
+DATAKU <- read_excel("data statin.xlsx", 
+    col_types = c("text", "numeric", "numeric", 
+        "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric","numeric","numeric","numeric"))
+View(DATAKU)
+attach(DATAKU)
+DATAKU
+```
+#analisis deskriptif
+```{r sum}
+summary(DATAKU)
+```
+#Regresi OLS
+```{r}
+regols<-lm(formula=Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU)
+summary(regols)
+```
+
+#deteksi multikolinearitas
+```{r}
+vif(regols)
+```
+
+#pengujian signifikansi parameter OLS
+#pengujian serentak (Uji F) melihat signifikansi seluruh model
+```{r}
+anova(regols)
+```
+#Confident interval 
+#uji parsial (uji T)
+```{r}
+confint.lm(regols, level=0.95)
+prediksi<-predict(regols)
+prediksi
+```
+#pengujian asumsi klasik regresi ols dan efek spasial
+#uji normalitas residual
+```{r}
+resid<-abs(regols$residuals)
+res=regols$residual
+ks.test(res,"pnorm",mean(res),sd(res),alternative=c("two.sided"))
+```
+#uji heterogenitas spasial (heterokedastisitas) untuk melihat keragaman data spasial
+```{r}
+bptest(lm(regols$residuals~X1+X2+X3+X4+X5+X6+X7+X8, data=DATAKU))
+```
+
+#pengujian  indepennden autokorelasi 
+```{r}
+dwtest(lm(regols$residuals~X1+X2+X3+X4+X5+X6+X7+X8, data = DATAKU))
+```
+
+GWR
+#Mencari bandwidth optimal (adaptive bandwidth)
+```{r}
+library(spgwr)
+b <- gwr.sel(Y~X1+X2+X3+X4+X5+X6+X7+X8,coords=cbind(DATAKU$Latitude,DATAKU$Longitude),data=DATAKU, adapt=TRUE,gweight=gwr.Gauss)
+b
+```
+##estimasi parameter adaptive gauss bandwith GWR
+```{r}
+gwr.adaptgauss<-gwr(Y~X1+X2+X3+X4+X5+X6+X7+X8,data = DATAKU,coords = cbind(DATAKU$Longitude, DATAKU$Latitude),adapt = b,hatmatrix = TRUE,gweight = gwr.Gauss)
+gwr.adaptgauss$bandwidth
+```
+#mencari jarak euclidean GWR
+```{r}
+v=DATAKU[12]
+u=DATAKU[11]
+v<-as.matrix(v)
+u<-as.matrix(u)
+j<-nrow(v)
+i<-nrow(u)
+jarak<-matrix(0,38,38)
+for (i in 1:38) {
+  for (j in 1:38) {
+    jarak[i,j]<-sqrt((u[i,]-u[j,])**2+(v[i,]-v[j,])**2)
+  }
+}
+jarak
+```
+#mencari pembobot GWr setiap lokasi
+```{r}
+h<-as.matrix(gwr.adaptgauss$bandwidth)
+i<-nrow(h)
+W<-matrix(0,38,38)
+for (i in 1:38) {
+  for (j in 1:38) {
+    W[i,j]<-exp(-(1/2)*(jarak[i,j]/h[i,])**2)
+    W[i,j]<-ifelse(jarak[i,j]<h[i,],W[i,j],0)
+  }
+}
+W
+```
+
+
+#fungsi pembobot kernel
+#fungsi kernel fixed (satu)
+##fixed  kernel gaussian
+```{r}
+fixgauss=gwr.sel(Y~X1+X2+X3+X4+X5+X6+X7+X8,data = DATAKU,adapt=FALSE,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),gweight=gwr.Gauss)
+gwr.fixgauss=gwr(Y~X1+X2+X3+X4+X5+X6+X7+X8,data = DATAKU,bandwidth = fixgauss,coords = cbind(DATAKU$Longitude, DATAKU$Latitude),hatmatrix = TRUE,gweight = gwr.Gauss)
+gwr.fixgauss
+names(gwr.fixgauss)
+BFC02.gwr.test(gwr.fixgauss)
+LMZ.F1GWR.test(gwr.fixgauss)
+LMZ.F2GWR.test(gwr.fixgauss)
+LMZ.F3GWR.test(gwr.fixgauss)
+anova(gwr.fixgauss)
+```
+
+##Fixed kernel Bisquare 
+```{r}
+#bandwidth
+fixbisquare=gwr.sel(Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU,adapt
+                    =FALSE,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),gweight=gwr.bisquare) 
+#estimasi parameter
+gwr.fixbisquare=gwr(Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU,bandwidth=fixbisquare,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),hatmatrix=TRUE,gweight=gwr.bisquare)
+gwr.fixbisquare
+names(gwr.fixbisquare)
+BFC02.gwr.test(gwr.fixbisquare)
+LMZ.F1GWR.test(gwr.fixbisquare)
+LMZ.F2GWR.test(gwr.fixbisquare)
+anova(gwr.fixbisquare)
+```
+
+##fixed kernel Tricube
+#estimasi parameter
+```{r}
+fixtricube=gwr.sel(Y~X1+X2+X3+X4+X5+X6+X7+X8,data = DATAKU,adapt = FALSE,coords = cbind(DATAKU$Longitude, DATAKU$Latitude),gweight = gwr.tricube)
+gwr.fixtricube=gwr(Y~X1+X2+X3+X4+X5+X6+X7+X8,data = DATAKU,bandwidth = fixtricube,coords = cbind(DATAKU$Longitude, DATAKU$Latitude),hatmatrix = TRUE,gweight = gwr.tricube)
+gwr.fixtricube
+
+names(gwr.fixtricube)
+BFC02.gwr.test(gwr.fixtricube)
+LMZ.F1GWR.test(gwr.fixtricube)
+LMZ.F2GWR.test(gwr.fixtricube)
+anova(gwr.fixtricube)
+```
+
+
+#FUNGSI KERNEL ADAPTIVE (dua)
+##fungsi kernel adaptive gaussian 
+```{r}
+#bandwidth
+adaptgauss=gwr.sel(Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU,adapt
+                   =TRUE,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),gweight=gwr.Gauss) 
+#estimasi parameter
+gwr.adaptgauss=gwr(Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU,adapt=adaptgauss, coords=cbind(DATAKU$Longitude, DATAKU$Latitude),hatmatrix=TRUE,gweight=gwr.Gauss)
+gwr.adaptgauss 
+names(gwr.adaptgauss)
+BFC02.gwr.test(gwr.adaptgauss)
+LMZ.F1GWR.test(gwr.adaptgauss)
+LMZ.F2GWR.test(gwr.adaptgauss)
+
+anova(gwr.adaptgauss)
+gwr.adaptgauss[5]
+```
+
+##FUNGSI KERNEL ADAPTIVE BISQUARE
+```{r}
+#bandwidth
+adaptbisquare=gwr.sel(Y~X1+X2+X3+X4+X5+X6+X7+X8, data=DATAKU,adapt=TRUE,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),gweight=gwr.bisquare) 
+#estimasi parameter
+gwr.adaptbisquare=gwr(Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU,adapt=adaptbisquare,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),hatmatrix=TRUE,gweight=gwr.bisquare)
+gwr.adaptbisquare
+names(gwr.adaptbisquare)
+BFC02.gwr.test(gwr.adaptbisquare)
+LMZ.F1GWR.test(gwr.adaptbisquare)
+LMZ.F2GWR.test(gwr.adaptbisquare)
+
+anova(gwr.adaptbisquare)
+```
+
+##FUNGSI KERNEL ADAPTIVE TRICUBE
+```{r}
+#bandwidth
+adapttricube=gwr.sel(Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU,adapt=TRUE,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),gweight=gwr.tricube) 
+#estimasi parameter
+gwr.adapttricube=gwr(Y~X1+X2+X3+X4+X5+X6+X7+X8,data=DATAKU,adapt=adapttricube,coords=cbind(DATAKU$Longitude, DATAKU$Latitude),hatmatrix=TRUE,gweight=gwr.tricube)
+gwr.adapttricube 
+names(gwr.adapttricube)
+BFC02.gwr.test(gwr.adapttricube)
+LMZ.F1GWR.test(gwr.adapttricube)
+LMZ.F2GWR.test(gwr.adapttricube)
+
+anova(gwr.adapttricube)
+```
+
+#menampilkan t hitung
+```{r}
+gwr.fixgauss[1]
+t_Intercept0=gwr.fixgauss$SDF$`(Intercept)`/gwr.fixgauss$SDF$`(Intercept)_se`
+t_X1=gwr.fixgauss$SDF$X1/gwr.fixgauss$SDF$X1_se
+t_X1
+t_X2=gwr.fixgauss$SDF$X2/gwr.fixgauss$SDF$X2_se
+t_X2
+t_X3=gwr.fixgauss$SDF$X3/gwr.fixgauss$SDF$X3_se
+t_X3
+t_X4=gwr.fixgauss$SDF$X4/gwr.fixgauss$SDF$X4_se
+t_X4
+t_X5=gwr.fixgauss$SDF$X5/gwr.fixgauss$SDF$X5_se
+t_X5
+t_X6=gwr.fixgauss$SDF$X6/gwr.fixgauss$SDF$X6_se
+t_X6
+t_X7=gwr.fixgauss$SDF$X7/gwr.fixgauss$SDF$X7_se
+t_X7
+t_X8=gwr.fixgauss$SDF$X8/gwr.fixgauss$SDF$X8_se
+t_X8
+```
+
+#membaca Output
+```{r}
+gwr.fixgauss$SDF$"(Intercept)"
+gwr.fixgauss$SDF$X1
+gwr.fixgauss$SDF$X2
+gwr.fixgauss$SDF$X3
+gwr.fixgauss$SDF$X4
+gwr.fixgauss$SDF$X5
+gwr.fixgauss$SDF$X6
+gwr.fixgauss$SDF$X7
+gwr.fixgauss$SDF$X8
+```
+
+#uji kecocokan model GWR
+```{r}
+BFC02.gwr.test(gwr.fixgauss)
+LMZ.F1GWR.test(gwr.fixgauss)
+LMZ.F2GWR.test(gwr.fixgauss)
+
+```
+
+#menampilkan r-square lokal
+```{r}
+gwr.fixgauss.R2=gwr.fixgauss$SDF$localR2
+gwr.fixgauss.R2
+```
+
+#Evaluasi hasil prediksi dan data observasi menggunakan grafik
+```{r}
+require (ggplot2)
+plot(DATAKU$Y, type="l", col="black")
+lines(gwr.fixgauss$SDF$pred, type="l", col="red")
+lines(prediksi, type="l", col="blue") 
+legend("topright",c("Observasi","Prediksi OLS","Prediksi GWR"),
+       col=c("black","blue","red"), lwd=3)
+```
+
+##Perbandingan Korelasi Antar Prediksi dengan Observasi
+```{r}
+obs<-DATAKU$Y
+gwr_pred<-gwr.fixgauss$SDF$pred
+gwr_pred
+cor(prediksi,obs)^2
+cor(gwr_pred,obs)^2
+AIC(regols)
+library(tidyverse)
+data.frame("MODEL" = c("GWR","Regresi Klasik"),
+           "AIC" = c(gwr.fixgauss[["results"]][["AICh"]],AIC(regols)))%>% arrange(AIC)
+```
+
+```{r dataframe}
+results <-as.data.frame(gwr.fixgauss$SDF)
+names(results)
+```
+
+```{r maps}
+library(sf)
+library(dplyr)
+library(raster)
+shp <- shapefile("Jawa_Timur_ADMIN_BPS.shp")
+plot(shp)
+colfunc <- colorRampPalette(c('green','yellow','red'))
+color <- colfunc(16)
+shp$Y <-DATAKU$Y
+spplot(shp,"Y", col.regions=color,lmain="Peta Sebaran Persentase Stunting Jawa Timur Tahun 2022")
+```
+```{r eksplorasi}
+library(sf)
+library(ggplot2)
+library(readxl)
+stunting <- read_excel("visualisasi stunting.xlsx")
+stunting
+# Membaca data shapefile
+spatial_data <- st_read("Jawa_Timur_ADMIN_BPS.shp")
+
+# Plot peta dengan ggplot2
+p <- ggplot() +
+  geom_sf(data = spatial_data, aes(fill = stunting$stunting)) +
+  scale_fill_gradient(low = "green", high = "red", name = "Tingkat Stunting (%)") +
+  labs(title = "Peta Sebaran Persentase Stunting Jawa Timur Tahun 2022",
+       x = "Longitude",
+       y = "Latitude") +
+  theme_minimal()
+
+library(ggrepel)
+
+p + geom_text_repel(
+  data = spatial_data,
+  aes(label = Kabupaten, x = st_coordinates(st_centroid(geometry))[, 1], y = st_coordinates(st_centroid(geometry))[, 2]),
+  size = 3
+)
+
+```
+
